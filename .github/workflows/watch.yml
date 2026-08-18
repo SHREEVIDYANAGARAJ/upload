@@ -1,9 +1,12 @@
-name: Watch good-first-issues
+name: Watch Fresh Good-First-Issues
 
 on:
   schedule:
-    - cron: "*/15 * * * *"   # every 15 minutes (GitHub may delay slightly under load)
-  workflow_dispatch: {}       # lets you trigger it manually from the Actions tab
+    # Run every 15 minutes
+    - cron: "*/15 * * * *"
+
+  # Allows you to run it manually from GitHub Actions
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -12,37 +15,67 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
 
-      - name: Run checker
-        id: run
+    steps:
+      # Get repository files
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Run the issue checker
+      - name: Check for fresh issues
+        id: checker
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          MAX_COMMENTS: "3"
-        run: python3 scripts/check_issues.py
 
+          # EXACTLY zero comments
+          MAX_COMMENTS: "0"
+
+          # Only consider issues created within the last 6 hours
+          MAX_AGE_HOURS: "6"
+
+          # Only unassigned issues
+          REQUIRE_NO_ASSIGNEE: "true"
+
+          # Documentation-related issues
+          REQUIRE_DOCUMENTATION: "true"
+
+          # Accept either Good First Issue or Help Wanted
+          ACCEPT_HELP_WANTED: "true"
+
+        run: |
+          python3 scripts/check_issues.py
+
+      # Create our alert label if we found something
       - name: Ensure alert label exists
-        if: steps.run.outputs.found == 'true'
+        if: steps.checker.outputs.found == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh label create "gfi-alert" --color FFD700 --description "New good-first-issue matches found" 2>/dev/null || true
+          gh label create "gfi-alert" \
+            --color FFD700 \
+            --description "Fresh good-first-issue matches found" \
+            2>/dev/null || true
 
-      - name: Open an issue in this repo with the new findings
-        if: steps.run.outputs.found == 'true'
+      # Create an issue in this repository so GitHub can notify you
+      - name: Create alert issue
+        if: steps.checker.outputs.found == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh issue create \
-            --title "New good-first-issue(s) found — $(date -u '+%Y-%m-%d %H:%M UTC')" \
+            --title "🚨 Fresh Open-Source Issues Found — $(date -u '+%Y-%m-%d %H:%M UTC')" \
             --body-file email_body.txt \
             --label "gfi-alert"
 
+      # Save issues we've already alerted you about
       - name: Commit updated state
         run: |
           git config user.name "gfi-watcher-bot"
           git config user.email "actions@github.com"
+
           git add state/seen_issues.json
-          git diff --quiet --cached || git commit -m "update seen issues [skip ci]"
-          git push
+
+          if ! git diff --cached --quiet; then
+            git commit -m "Update seen issues [skip ci]"
+            git push
+          fi
