@@ -1,0 +1,48 @@
+name: Watch good-first-issues
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"   # every 15 minutes (GitHub may delay slightly under load)
+  workflow_dispatch: {}       # lets you trigger it manually from the Actions tab
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run checker
+        id: run
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MAX_COMMENTS: "3"
+        run: python3 scripts/check_issues.py
+
+      - name: Ensure alert label exists
+        if: steps.run.outputs.found == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh label create "gfi-alert" --color FFD700 --description "New good-first-issue matches found" 2>/dev/null || true
+
+      - name: Open an issue in this repo with the new findings
+        if: steps.run.outputs.found == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue create \
+            --title "New good-first-issue(s) found — $(date -u '+%Y-%m-%d %H:%M UTC')" \
+            --body-file email_body.txt \
+            --label "gfi-alert"
+
+      - name: Commit updated state
+        run: |
+          git config user.name "gfi-watcher-bot"
+          git config user.email "actions@github.com"
+          git add state/seen_issues.json
+          git diff --quiet --cached || git commit -m "update seen issues [skip ci]"
+          git push
